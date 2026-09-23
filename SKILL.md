@@ -6,6 +6,11 @@ description: >-
   残留路径修复（环境变量/WSL/OneDrive/注册表全量替换）→ 收尾与回滚。Use whenever 用户想把
   C:\Users 下的用户文件夹改名/换名/改短、账户目录被微软账户截断想修正、提到 ProfileImagePath、
   user profile folder rename，或目录改名后出现 OneDrive/WSL/环境变量/软件路径失效需要修复。
+license: MIT
+compatibility: Windows 10/11, PowerShell 5.1+
+metadata:
+  version: 1.1.0
+  author: kuntao2011
 ---
 
 # Windows 用户目录改名（C:\Users\旧名 → 新名）
@@ -29,8 +34,9 @@ description: >-
    修了会被 OneDrive 重启后写回，别反复修这些键：`HKCU\Environment` 的 OneDrive/OneDriveConsumer、
    `SyncEngines\...\MountPoint`、`OneDrive\Accounts\...\UserFolder`、User Shell Folders 里被
    接管的 Documents/Pictures。唯一正解（删 junction 的前提）：OneDrive 托盘图标 → 设置 →
-   账户 → **取消链接此电脑** → 重新登录 → 位置选 `C:\Users\新名\OneDrive`。文件已在本地，
-   只对账不重下载。junction 在，旧路径同步完全正常，不着急可延后做。
+   账户 → **取消链接此电脑** → 重新登录 → 位置选 `C:\Users\新名\OneDrive`；此前自定义过
+   OneDrive 位置（不在 `C:\Users\` 下）的用户，重登时选回**原自定义路径**，别落回默认位置。
+   文件已在本地，只对账不重下载。junction 在，旧路径同步完全正常，不着急可延后做。
 4. **含中文的 .bat 必须 GBK(ANSI) 编码 + CRLF**。UTF-8 + `chcp 65001` 会让 cmd 解析
    `if(...)` 括号块时错位（症状：`'试。'`、`'smon'` 之类把中文提示切成"命令"的乱码报错）。
    Agent 的 Write 工具只能写 UTF-8，所以**改名 bat 一律用 `scripts/gen-step2-bat.ps1` 生成**
@@ -81,7 +87,8 @@ description: >-
    **右键 → 以管理员身份运行**，双击不提权会被脚本拒绝）
 3. 运行 step2-as-admin.bat，看到 `Done` 后注销，登回原账户
 4. 若 ren 报 Access denied：资源监视器（resmon）**搜不到服务类句柄**，要用 Sysinternals
-   `handle.exe` 全量扫 `Users\旧名` 找占用进程（服务类常见；结束/停服务后重跑 bat，幂等）
+   [`handle.exe`](https://learn.microsoft.com/sysinternals/downloads/handle) 全量扫
+   `Users\旧名` 找占用进程（服务类常见；结束/停服务后重跑 bat，幂等）
 
 ### Phase 3 残留修复（登回原账户后）
 
@@ -91,12 +98,14 @@ description: >-
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-hkcu-paths.ps1 `
      -OldName 旧名 -NewName 新名 -All
    ```
+   支持先加 `-WhatIf` 干跑预览命中清单；实际写入前会把每个被改值的**原值**落盘为
+   `Desktop\hkcu-path-fix-undo.ps1`（`-UndoLog` 可改路径），出问题跑它即可整批还原。
    覆盖：HKCU\Environment、Shell Folders/User Shell Folders、Lxss、OneDrive 相关键、
    SyncEngines；`-All` 再全量扫 HKCU 所有 REG_SZ/REG_EXPAND_SZ 字符串值替换（壁纸、主题、
    协议处理器、卸载信息、托盘缓存等一次清完）。只动字符串值类型，MULTI_SZ/BINARY 不碰。
 3. 实测 WSL：`wsl -d <发行版> -e echo ok`（BasePath 修好应能启动）
-4. 重启 OneDrive 一次，观察注册表是否被写回旧路径——写回属正常（见铁律 3），转官方迁移，
-   **不要**再修那几个键
+4. 重启 OneDrive 一次，观察注册表是否被写回旧路径——写回属正常（见铁律 3），转官方迁移
+   （自定义过 OneDrive 位置的用户选回原自定义路径），**不要**再修那几个键
 5. 文件层 grep：`.gitconfig`、`.ssh/config`、`.bashrc`、技能/脚本目录、各工具 config.json
    中的旧绝对路径。Git Bash 里 `sed -i 's/C:\\Users\\X/.../'` 这类含双反斜杠的模式会
    **静默不生效**，改用不含反斜杠的简单模式（如 `s/旧名/新名/`）
@@ -119,7 +128,7 @@ description: >-
 | 症状 | 原因与解法 |
 |---|---|
 | bat 报 `'试。'`/`'smon'` 之类乱码"命令" | UTF-8+chcp 解析括号块错位；换 GBK+CRLF 生成 |
-| ren 拒绝访问，resmon 查无果 | 服务类句柄 resmon 搜不到；用 `handle.exe`；惯犯：微软电脑管家（`sc stop MSPCManagerService` + `taskkill`） |
+| ren 拒绝访问，resmon 查无果 | 服务类句柄 resmon 搜不到；用 [`handle.exe`](https://learn.microsoft.com/sysinternals/downloads/handle)；惯犯：微软电脑管家（`sc stop MSPCManagerService` + `taskkill`） |
 | PowerShell `.SetValue()` 报"无法写入到注册表键" | `Get-Item`/`Get-ChildItem` 给的是**只读句柄**；`[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($rel,$true)` 重开 |
 | OneDrive 注册表修完又变回旧路径 | 源头是 SQLite 设置库；走官方取消链接/重新登录流程 |
 | 部分键（WallPaper、Installer、AppListBackup）改不动 | 系统保护键，junction 兜底，放弃即可 |

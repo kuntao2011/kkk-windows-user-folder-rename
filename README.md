@@ -2,7 +2,7 @@
 
 **中文** | [English](#english)
 
-把 Windows 用户配置目录（`C:\Users\旧名`）安全改名的完整工具集：改名前只读盘点 → 注册表/hive 备份 → 生成防呆改名脚本 → 另一管理员账户一键执行 → 残留路径批量修复 → 收尾与回滚方案。典型场景：微软账户登录时用户文件夹名被截断（如取邮箱前 5 个字母）、拼写错误、想把目录改短。
+把 Windows 用户配置目录（`C:\Users\旧名`）安全改名的完整工具集：改名前只读盘点 → 注册表/hive 备份 → 生成防呆改名脚本 → 另一管理员账户执行 → 残留路径批量修复 → 收尾与回滚方案。典型场景：微软账户登录时用户文件夹名被截断（如取邮箱前 5 个字母）、拼写错误、想把目录改短。
 
 ## 为什么不能直接改名
 
@@ -14,10 +14,10 @@
 
 ## 特性
 
-- **四阶段完整流程**：盘点 → 备份+生成脚本 → 用户 3 分钟手动操作 → 残留修复
-- **防呆改名脚本**（自动生成）：提权检查、本人账户拒绝、重复运行自动退出（幂等）、执行前自动停止已知句柄占用服务
+- **五阶段完整流程**：盘点 → 备份+生成脚本 → 用户 3 分钟手动操作 → 残留修复 → 收尾
+- **防呆改名脚本**（自动生成）：提权检查、本人账户拒绝、重复运行自动退出（幂等）、执行前自动停止已知句柄占用服务，改注册表前自动导出 ProfileList 备份
 - **junction 兜底**：改名后创建 `C:\Users\旧名 → 新名` 目录联接，所有写死旧路径的程序继续可用，观察稳定一周后再删
-- **批量残留修复器**：定点修环境变量/WSL/OneDrive 相关键，可选全量扫描 HKCU 所有字符串值（只动 REG_SZ/REG_EXPAND_SZ，不碰二进制）
+- **批量残留修复器**：定点修环境变量/WSL/OneDrive 相关键，可选全量扫描 HKCU 所有字符串值（只动 REG_SZ/REG_EXPAND_SZ，不碰二进制）；支持 `-WhatIf` 干跑，写入前自动把原值落盘为 undo 脚本
 - **OneDrive 特例处理**：识别其源头是本地 SQLite 设置库、注册表会被写回的机制，给出官方迁移的正确路径，避免无效反复修
 - **完整回滚方案**：.reg 导出 + 用户 hive 快照 + 系统还原点三重保险
 
@@ -48,12 +48,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-hkcu-paths.ps1 `
 ## 目录结构
 
 ```
-├── SKILL.md                 # 完整流程文档（四阶段 + 铁律 + 坑速查表 + 回滚）
+├── SKILL.md                 # 完整流程文档（五阶段 + 铁律 + 坑速查表 + 回滚）
 ├── README.md                # 本文件
 └── scripts/
     ├── gen-step2-bat.ps1    # 生成防呆改名 bat（GBK+CRLF，参数化）
-    ├── scan-old-refs.ps1    # 改名前只读盘点（SID/账户/硬编码/服务/残留基线）
-    └── fix-hkcu-paths.ps1   # 改名后残留路径修复（定点 + -All 全量）
+    ├── scan-old-refs.ps1    # 改名前只读盘点（SID/账户/硬编码/服务/计划任务/残留基线）
+    └── fix-hkcu-paths.ps1   # 改名后残留路径修复（定点 + -All 全量，-WhatIf + undo 脚本）
 ```
 
 ## 注意
@@ -70,7 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-hkcu-paths.ps1 `
 
 # English
 
-A complete toolkit for safely renaming a Windows user profile folder (`C:\Users\old-name`): read-only inventory → registry/hive backup → generate a foolproof rename script → one-click execution from another admin account → batch residue-path fixing → cleanup and rollback.
+A complete toolkit for safely renaming a Windows user profile folder (`C:\Users\old-name`): read-only inventory → registry/hive backup → generate a foolproof rename script → execution from another admin account → batch residue-path fixing → cleanup and rollback.
 
 ## Why not just rename it
 
@@ -80,10 +80,10 @@ A complete toolkit for safely renaming a Windows user profile folder (`C:\Users\
 
 ## Highlights
 
-- Four-phase workflow: inventory → backup + script generation → 3-minute manual step → residue fixing
-- Generated rename script with guards: elevation check, owner-account refusal, idempotent re-runs, auto-stopping known handle-holder services
+- Five-phase workflow: inventory → backup + script generation → 3-minute manual step → residue fixing → cleanup
+- Generated rename script with guards: elevation check, owner-account refusal, idempotent re-runs, auto-stopping known handle-holder services, plus an automatic ProfileList backup before touching the registry
 - Junction fallback (`C:\Users\old → new`) keeps old-path programs working; remove it after a stable week
-- Batch fixer for targeted keys plus an optional full HKCU sweep (string values only)
+- Batch fixer for targeted keys plus an optional full HKCU sweep (string values only), with a `-WhatIf` dry-run and an automatic undo script written before any value changes
 - Documents the OneDrive special case (its source of truth is a local SQLite store — registry edits get rewritten; use the official unlink/relink flow)
 - Triple rollback safety: .reg exports + user hive snapshots + system restore point
 
@@ -110,6 +110,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-hkcu-paths.ps1 `
 ```
 
 Full workflow, rules and a pitfall cheat-sheet live in [SKILL.md](SKILL.md).
+
+## Repository layout
+
+```
+├── SKILL.md                 # Full workflow doc (five phases + rules + pitfall cheat-sheet + rollback)
+├── README.md                # This file
+└── scripts/
+    ├── gen-step2-bat.ps1    # Generates the guarded rename bat (GBK + CRLF, parameterized)
+    ├── scan-old-refs.ps1    # Read-only pre-rename inventory (SID/accounts/paths/services/tasks/baseline)
+    └── fix-hkcu-paths.ps1   # Post-rename residue fixer (targeted + -All sweep, -WhatIf + undo script)
+```
 
 ## Notes
 
