@@ -13,10 +13,21 @@ param(
 
 if ($OldName -ieq $NewName) { throw 'OldName and NewName must differ' }
 
+# Validate the SID against ProfileList (readable without elevation): a typo would
+# make the generated bat silently reg add a garbage key.
+$plKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $Sid
+if (-not (Test-Path $plKey)) { throw "SID '$Sid' not found under ProfileList - rerun scan-old-refs.ps1 and copy the SID exactly" }
+$plPath = (Get-ItemProperty $plKey -ErrorAction SilentlyContinue).ProfileImagePath
+if ($plPath -and ($plPath -notlike "*\$OldName")) { throw "ProfileList\$Sid currently points to '$plPath', not to a folder ending with '\$OldName' - wrong SID?" }
+
 $stopCmds = ''
 foreach ($s in $KillServices)  { $stopCmds += "sc stop $s >nul 2>&1" + "`r`n" }
 foreach ($p in $KillProcesses) { $stopCmds += "taskkill /f /im $p >nul 2>&1" + "`r`n" }
 
+# Note on the %USERNAME% guard below: it only catches accounts whose login name
+# equals OldName. When a Microsoft account display name differs from the profile
+# folder name, the guard passes but ren still fails with access denied (the
+# ntuser.dat of the signed-in owner is locked); the [FAIL] branch handles that.
 $bat = @"
 @echo off
 setlocal
@@ -80,9 +91,12 @@ echo        OK.
 
 echo.
 echo [2/3] Updating ProfileImagePath in registry ...
+reg export "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\__SID__" "%~dp0profilelist-backup.reg" /y >nul 2>&1
+if exist "%~dp0profilelist-backup.reg" echo        Pre-change backup saved: %~dp0profilelist-backup.reg
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\__SID__" /v ProfileImagePath /t REG_EXPAND_SZ /d "C:\Users\__NEW__" /f
 if %errorlevel% neq 0 (
     echo [FAIL] Registry update failed. Screenshot this window before closing.
+    echo        The pre-change backup is %~dp0profilelist-backup.reg ^(double-click to restore^).
     pause
     exit /b 1
 )
@@ -114,7 +128,9 @@ $bat = $bat.Replace("`r`n", "`n").Replace("`n", "`r`n")
 $dir = Split-Path -Parent $OutFile
 if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
 
-[IO.File]::WriteAllText($OutFile, $bat, [Text.Encoding]::Default)
+# GetEncoding(0) = system ANSI codepage (GBK on zh-CN) under both PS 5.1 and pwsh 7;
+# [Text.Encoding]::Default would be UTF-8 (no BOM) under pwsh 7 and garble Chinese paths.
+[IO.File]::WriteAllText($OutFile, $bat, [Text.Encoding]::GetEncoding(0))
 Write-Output ("GENERATED: " + $OutFile)
 Write-Output ("Size: " + (Get-Item $OutFile).Length + " bytes, ANSI encoding, CRLF")
 Write-Output "Reminder: must be run from ANOTHER admin account after a reboot (not the profile owner)."
